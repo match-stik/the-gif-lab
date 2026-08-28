@@ -49,6 +49,7 @@ interface GifPersistedSettings {
   chromaColor: string;
   chromaTolerance: number;
   chromaBlend: number;
+  greenScreen: boolean;
   lossyLevel: number;
   colorCount: number;
   showAdvancedOpt: boolean;
@@ -92,6 +93,7 @@ const DEFAULT_GIF_SETTINGS: GifPersistedSettings = {
   // The server has always defaulted the edge blend to 0.1 and this panel
   // never sent one, so that default was the only value anyone could get.
   chromaBlend: 0.1,
+  greenScreen: false,
   lossyLevel: 80,
   colorCount: 128,
   showAdvancedOpt: false,
@@ -208,6 +210,13 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
   const [chromaColor, setChromaColor] = useState('#00FF00');
   const [chromaTolerance, setChromaTolerance] = useState(0.3);
   const [chromaBlend, setChromaBlend] = useState(0.1);
+  // Cutout has always sent a mode and this tab never did, so it fell to the
+  // route's default of chromakey — which works in YUV and deliberately ignores
+  // luminance, so on a red backdrop it treats pink as the same colour and takes
+  // the cheeks with it. colorkey compares RGB and does not. Measured on a pink
+  // cheek against a red fill: chromakey starts eating it at 0.10 and has
+  // destroyed it by 0.20; colorkey still has it at 0.30.
+  const [greenScreen, setGreenScreen] = useState(false);
   const [paintOpen, setPaintOpen] = useState(false);
   const paintImageRef = useRef<HTMLImageElement>(null);
   const paintBoxRef = useRef<HTMLDivElement>(null);
@@ -309,6 +318,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
         chromaColor,
         chromaTolerance,
         chromaBlend,
+        greenScreen,
         lossyLevel,
         colorCount,
         showAdvancedOpt,
@@ -335,7 +345,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
   }, [
     sessionRestored, sessionId, frames, selectedFrames, fps, outputWidth, outputHeight,
     outputUrl, outputSize, optimizeStats, preserveColorPreset, speedValue, chromaMode, chromaColor,
-    chromaTolerance, chromaBlend, lossyLevel, colorCount, showAdvancedOpt, dither, ditherMethod,
+    chromaTolerance, chromaBlend, greenScreen, lossyLevel, colorCount, showAdvancedOpt, dither, ditherMethod,
     colorMethod, optimizeLevel, dropDuplicates, removeFrames, stripMetadata,
     optimizeScale, unoptimize, interlace, showTextPanel, overlayText, textPosition, textAnchor,
     textSize, textFillColor, textBorderColor, textFont,
@@ -370,6 +380,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
         setChromaTolerance(settings.chromaTolerance);
         // Older saved rows predate this field; the server's own default stands in.
         setChromaBlend(settings.chromaBlend ?? 0.1);
+        setGreenScreen(settings.greenScreen ?? false);
         setLossyLevel(settings.lossyLevel);
         setColorCount(settings.colorCount);
         setShowAdvancedOpt(settings.showAdvancedOpt);
@@ -1100,7 +1111,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
         const res = await apiFetch(`/api/gif/chroma-key/${sessionId}/${frame.filename}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ color: chromaColor, tolerance: chromaTolerance, blend: chromaBlend }),
+          body: JSON.stringify({ color: chromaColor, tolerance: chromaTolerance, blend: chromaBlend, mode: greenScreen ? 'chroma' : 'color' }),
         });
 
         if (!res.ok) {
@@ -1118,7 +1129,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
     } finally {
       setRemovingBg(false);
     }
-  }, [sessionId, frames, selectedFrames, chromaColor, chromaTolerance, chromaBlend]);
+  }, [sessionId, frames, selectedFrames, chromaColor, chromaTolerance, chromaBlend, greenScreen]);
 
   // Create GIF
   const createGif = useCallback(async () => {
@@ -1931,9 +1942,9 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                   <label className={cn("text-xs", colors.textMuted)}>Tolerance:</label>
                   <input
                     type="range"
-                    min={0.05}
+                    min={0.01}
                     max={0.8}
-                    step={0.05}
+                    step={0.01}
                     value={chromaTolerance}
                     onChange={(e) => setChromaTolerance(parseFloat(e.target.value))}
                     className="flex-1"
@@ -1955,6 +1966,22 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                   />
                   <span className={cn("text-xs w-10 text-right", colors.textMain)}>{Math.round(chromaBlend * 100)}%</span>
                 </div>
+                <label className="flex gap-2 items-start cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={greenScreen}
+                    onChange={(e) => setGreenScreen(e.target.checked)}
+                    className="mt-0.5"
+                    style={{ accentColor: colors.accent }}
+                  />
+                  <span className={cn("text-xs", colors.textMain)}>
+                    Green-screen mode
+                    <span className={cn("block text-[11px]", colors.textMuted)}>
+                      For an actual green screen, not a flat backdrop. Leave it off and a red
+                      background stops taking the pink with it.
+                    </span>
+                  </span>
+                </label>
                 <button
                   onClick={applyChromaKey}
                   disabled={removingBg || selectedFrames.size === 0}
