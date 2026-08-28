@@ -1605,7 +1605,14 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                   // frame — which is why the viewer never left frame one.
                   onClick={() => setPreviewFrame(i)}
                   className={cn(
-                    "flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 cursor-pointer transition-all relative",
+                    // 80px, not 56. The tick in the corner is the ONLY thing
+                    // that changes the selection, and at 16px it was about a
+                    // third of what a finger can reliably hit — so on a phone
+                    // every attempt to select landed on the thumbnail instead
+                    // and only moved the viewer. A bigger thumbnail is what
+                    // buys room for a real target AND still leaves somewhere to
+                    // tap for a look.
+                    "flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 cursor-pointer transition-all relative",
                     // Ring = the frame you are looking at. Dimmed = not in the
                     // GIF. Two different facts, so two different signals.
                     previewFrame === i ? "border-current" : "border-transparent",
@@ -1618,23 +1625,29 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleFrame(i); }}
                       aria-label={selectedFrames.has(i) ? 'Deselect frame' : 'Select frame'}
-                      className="absolute bottom-0.5 left-0.5 w-4 h-4 rounded-full flex items-center justify-center border"
+                      className="absolute bottom-1 left-1 w-7 h-7 rounded-full flex items-center justify-center border-2"
                       style={{
                         borderColor: colors.accent,
-                        background: selectedFrames.has(i) ? colors.accent : 'rgba(0,0,0,0.45)',
+                        background: selectedFrames.has(i) ? colors.accent : 'rgba(0,0,0,0.55)',
                       }}
                     >
-                      {selectedFrames.has(i) && <Check className="w-2.5 h-2.5 text-white" />}
+                      {selectedFrames.has(i) && <Check className="w-4 h-4" style={{ color: 'var(--gl-on-accent)' }} />}
                     </button>
                   )}
                   {(frame.processed || frame.chromaKeyed) && (
-                    <div className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-green-500 flex items-center justify-center">
-                      <Check className="w-2 h-2 text-white" />
+                    <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 text-white" />
                     </div>
                   )}
                 </div>
               ))}
             </div>
+            {/* The app never said this out loud and the readme did. Two gestures
+                on one thumbnail is not guessable, and the person who cannot find
+                the second one concludes selection is broken rather than hidden. */}
+            <p className={cn("text-[11px] mt-1", colors.textMuted)}>
+              Tap a frame to look at it. Tap its circle to include or leave it out.
+            </p>
           </div>
         )}
 
