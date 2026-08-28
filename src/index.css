@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* The browser hides [hidden] with `display: none`, and that rule loses to any
+   class that sets display. Tailwind sets display constantly, so without this
+   line a hidden tab keeps rendering on top of the one you asked for. */
+[hidden] { display: none !important; }
+
+/* Native range inputs and checkboxes paint themselves with the browser's own
+   accent, which is blue. The original set this globally; standing alone it has
+   said here or every slider in her components comes out the wrong color. */
+/* The components style text on the accent with this variable, which the app
+   they came from set on the document root. Standing alone nothing defined it,
+   so nine elements — the Create GIF button among them — had no text colour at
+   all and inherited whatever was behind them. */
+:root {
+  --gl-on-accent: #ffffff;
+
+  /* The header pads itself with calc(var(--sat) + 0.75rem) so it clears a
+     phone's notch. An UNDEFINED variable inside calc() makes the whole
+     declaration invalid, so without this the padding was not reduced — it was
+     thrown away, and the header sat flush against the top edge. */
+  --sat: env(safe-area-inset-top, 0px);
+
+  accent-color: #f97316;
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; -webkit-text-size-adjust: 100%; }
