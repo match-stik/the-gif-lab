@@ -66,18 +66,61 @@ To stop it, press `Ctrl+C` in the terminal.
 
 ### Installing it as an app
 
-On the machine that is running it, open it in Chrome or Edge and there is an
-install button in the address bar; on an iPhone or iPad, use Share → Add to Home
-Screen. It then opens in its own window with no browser chrome around it. The
-server still has to be running — the page is the controls, and your computer
-does the work.
+Once it is open in a browser it can go on a home screen and open in its own
+window, with no browser chrome round it. The server still has to be running
+somewhere — the page is the controls, your computer does the work.
 
-**On your phone, over your own network, this needs HTTPS.** Browsers only allow
-the service worker an installable app requires on a secure origin, which means
-`localhost` or `https://`. Plain `http://192.168.x.x:8080` will load and work
-perfectly well in a browser tab, and will not offer to install. If you want it
-on a home screen, put it behind something that terminates TLS — Tailscale's
-`tailscale serve`, a reverse proxy, or Caddy will each do it in a line.
+**On the machine that is running it,** this already works. Open
+<http://localhost:8080>, and Chrome or Edge will show an install button in the
+address bar; on Safari it is Share → Add to Home Screen.
+
+**On your phone, or any other device, it needs HTTPS.** That is not this tool
+being fussy — browsers only allow the service worker an installed app needs on a
+secure origin, and a secure origin means `localhost` or `https://`. Plain
+`http://192.168.1.20:8080` will load and work perfectly well in a browser tab.
+It will simply never offer to install.
+
+So if you want it on a phone, put it behind something that gives you a
+certificate. Three ways, easiest first.
+
+**Tailscale.** If the machine is already on your tailnet, this is one line and
+there is no port to open, no domain to buy, and nothing exposed to the internet:
+
+```
+tailscale serve --bg 8080
+```
+
+It answers on `https://<machine>.<your-tailnet>.ts.net`, and that is a real
+certificate, so your phone will offer to install it. If that address is already
+serving something else, give this one a path of its own:
+
+```
+tailscale serve --bg --set-path /giflab 8080
+```
+
+`tailscale serve status` shows what is running, and `tailscale serve --bg off`
+stops it.
+
+**Caddy,** if you already have a domain pointed at the machine. Two lines in a
+Caddyfile and it fetches the certificate itself:
+
+```
+giflab.example.com {
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+**Any reverse proxy you already run** — nginx, Traefik, whatever is in front of
+your other things. Point it at `127.0.0.1:8080`. There is nothing special about
+this app: it is a plain HTTP server on one port.
+
+**What about `--host 0.0.0.0`?** That makes it reachable from other devices on
+your network without any of the above, and it is the honest answer for "I just
+want it on my phone for ten minutes". Two things to know. It will not offer to
+install, for the reason above. And **there is no password on it** — anyone who
+can reach that address can use it, and every job it runs starts a program on
+your machine. Only on a network you trust.
+
 
 ---
 
