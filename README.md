@@ -64,6 +64,21 @@ server, run `npm run check`.
 
 To stop it, press `Ctrl+C` in the terminal.
 
+### Installing it as an app
+
+On the machine that is running it, open it in Chrome or Edge and there is an
+install button in the address bar; on an iPhone or iPad, use Share → Add to Home
+Screen. It then opens in its own window with no browser chrome around it. The
+server still has to be running — the page is the controls, and your computer
+does the work.
+
+**On your phone, over your own network, this needs HTTPS.** Browsers only allow
+the service worker an installable app requires on a secure origin, which means
+`localhost` or `https://`. Plain `http://192.168.x.x:8080` will load and work
+perfectly well in a browser tab, and will not offer to install. If you want it
+on a home screen, put it behind something that terminates TLS — Tailscale's
+`tailscale serve`, a reverse proxy, or Caddy will each do it in a line.
+
 ---
 
 ## Using GIF Lab

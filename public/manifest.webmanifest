@@ -1,0 +1,15 @@
+{
+  "name": "GIF Lab",
+  "short_name": "GIF Lab",
+  "description": "Make transparent GIFs, stickers and emoji, and cut backgrounds out of stills — on your own machine.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#14161a",
+  "theme_color": "#14161a",
+  "icons": [
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "maskable" }
+  ]
+}

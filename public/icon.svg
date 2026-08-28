@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="GIF Lab">
+  <defs>
+    <!-- The checkerboard is the universal sign for "this part is see-through",
+         which is the one thing this tool is actually about. -->
+    <pattern id="checker" width="48" height="48" patternUnits="userSpaceOnUse">
+      <rect width="48" height="48" fill="#f2f3f5"/>
+      <rect width="24" height="24" fill="#c9ccd2"/>
+      <rect x="24" y="24" width="24" height="24" fill="#c9ccd2"/>
+    </pattern>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#14161a"/>
+  <rect x="72" y="72" width="368" height="368" rx="56" fill="url(#checker)"/>
+  <!-- A subject standing in the clear space, with a bite taken out of the
+       backdrop behind it — the cut, mid-cut. -->
+  <path d="M256 150c34 0 60 27 60 60s-26 62-60 62-60-28-60-62 26-60 60-60z" fill="#e8853a"/>
+  <path d="M150 400c0-58 47-96 106-96s106 38 106 96z" fill="#e8853a"/>
+</svg>
