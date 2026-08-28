@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-server/
+
+# Frames and finished files while you are working.
+data/
+
+# Where people usually put the background-removal setup.
+.venv/
+*.onnx
+
+.DS_Store
+Thumbs.db
+*.log
