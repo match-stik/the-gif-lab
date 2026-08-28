@@ -1605,14 +1605,13 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                   // frame — which is why the viewer never left frame one.
                   onClick={() => setPreviewFrame(i)}
                   className={cn(
-                    // 80px, not 56. The tick in the corner is the ONLY thing
-                    // that changes the selection, and at 16px it was about a
-                    // third of what a finger can reliably hit — so on a phone
-                    // every attempt to select landed on the thumbnail instead
-                    // and only moved the viewer. A bigger thumbnail is what
-                    // buys room for a real target AND still leaves somewhere to
-                    // tap for a look.
-                    "flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 cursor-pointer transition-all relative",
+                    // 64px. The circle in the corner is the ONLY thing that
+                    // changes the selection, and at 16px on a 56px tile it was
+                    // both unhittable and, on a dark frame, barely visible as a
+                    // control at all. It needs to be findable and touchable
+                    // WITHOUT eating the tile — a disc a third the width of the
+                    // picture is its own kind of wrong.
+                    "flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 cursor-pointer transition-all relative",
                     // Ring = the frame you are looking at. Dimmed = not in the
                     // GIF. Two different facts, so two different signals.
                     previewFrame === i ? "border-current" : "border-transparent",
@@ -1625,13 +1624,22 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleFrame(i); }}
                       aria-label={selectedFrames.has(i) ? 'Deselect frame' : 'Select frame'}
-                      className="absolute bottom-1 left-1 w-7 h-7 rounded-full flex items-center justify-center border-2"
-                      style={{
-                        borderColor: colors.accent,
-                        background: selectedFrames.has(i) ? colors.accent : 'rgba(0,0,0,0.55)',
-                      }}
+                      className="absolute bottom-0 left-0 p-1.5 flex items-center justify-center"
                     >
-                      {selectedFrames.has(i) && <Check className="w-4 h-4" style={{ color: 'var(--gl-on-accent)' }} />}
+                      {/* The visible disc is 20px; the padding around it makes the
+                          touch target half again as big without the dot growing
+                          into the picture. A ring when it is out, filled when it
+                          is in — so it reads as a control either way, including
+                          on a dark frame where a dark dot simply vanished. */}
+                      <span
+                        className="w-5 h-5 rounded-full flex items-center justify-center border-2 shadow"
+                        style={{
+                          borderColor: colors.accent,
+                          background: selectedFrames.has(i) ? colors.accent : 'rgba(0,0,0,0.6)',
+                        }}
+                      >
+                        {selectedFrames.has(i) && <Check className="w-3 h-3" style={{ color: 'var(--gl-on-accent)' }} />}
+                      </span>
                     </button>
                   )}
                   {(frame.processed || frame.chromaKeyed) && (
