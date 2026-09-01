@@ -7,7 +7,7 @@
 // color, and only reduce colors if the file is genuinely over a cap.
 
 import { type MouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { Brush, Check, Crop, Download, Eraser, ImageUp, Loader2, Pipette, RotateCcw, TriangleAlert, Undo2, X } from 'lucide-react';
+import { Brush, Check, Crop, Download, Eraser, Eye, EyeOff, ImageUp, Loader2, Pipette, RotateCcw, TriangleAlert, Undo2, X } from 'lucide-react';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
@@ -104,6 +104,21 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   const strokeRef = useRef<Stroke | null>(null);
   const paintCanvas = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  // THE GHOST. Once the background is cut away, the place you have to paint back
+  // into is EMPTY — you are aiming a brush at transparency and finding out where
+  // it went after you press apply. So the pre-cut picture sits faintly behind
+  // the cut one while you paint, showing through the holes it left.
+  //
+  // Nothing new is stored for this: the cutout and mask-paint routes already
+  // write original-<filename> beside the frame before they touch it, and the
+  // cutout response has been handing back an originalUrl this view threw away.
+  // Deriving the path rather than reading that field means it also works for a
+  // frame keyed by color, which keeps an original too and never returned one.
+  const [ghost, setGhost] = useState(true);
+  const [ghostOk, setGhostOk] = useState(true);
+  const ghostUrl = sessionId && filename
+    ? `/api/gif/frame/${sessionId}/original-${filename}`
+    : '';
   // Zoom and pan are a pure view transform on the wrapper. Everything that maps
   // between screen and image pixels reads the live bounding rect, which is
   // already post-transform, so none of the stroke maths changes with zoom.
@@ -504,6 +519,10 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   // change has to redraw or the overlay lands at the old scale.
   useEffect(() => { drawStrokes(strokes); }, [strokes, drawStrokes, imageUrl, painting, zoom, pan]);
 
+  // A new frame has its own original, or none at all. Without this reset, one
+  // frame that was never cut turns the ghost off for every frame after it.
+  useEffect(() => { setGhostOk(true); }, [sessionId, filename]);
+
   /** Mirror the point under the finger into the loupe, in the corner away from it. */
   const updateLoupe = useCallback((clientX: number, clientY: number) => {
     const point = toImagePoint(clientX, clientY);
@@ -847,6 +866,20 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                 className="relative"
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }}
               >
+                {/* Behind the cut picture, showing through wherever it is now
+                    transparent. Only while painting: the rest of the time you are
+                    looking at the cutout and a ghost would just make it look
+                    like the key had failed. It hides itself if no original was
+                    ever kept, so a frame that was never cut cannot show one. */}
+                {painting && ghost && ghostOk && ghostUrl && cut && (
+                  <img
+                    src={ghostUrl}
+                    alt=""
+                    aria-hidden
+                    onError={() => setGhostOk(false)}
+                    className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain opacity-30"
+                  />
+                )}
                 <img
                   ref={imageRef}
                   src={imageUrl}
@@ -857,7 +890,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                     setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
                     drawStrokes(strokes);
                   }}
-                  className={cn('max-h-[46vh] w-auto object-contain', picking && 'cursor-crosshair')}
+                  className={cn('relative z-10 max-h-[46vh] w-auto object-contain', picking && 'cursor-crosshair')}
                 />
                 {/* The paint surface sits exactly over the image and only takes
                     pointer events while painting, so tapping to pick a color and
@@ -868,7 +901,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                   onPointerMove={extendStroke}
                   onPointerUp={endStroke}
                   onPointerCancel={endStroke}
-                  className={cn('absolute inset-0 h-full w-full', painting ? 'touch-none' : 'pointer-events-none')}
+                  className={cn('absolute inset-0 z-20 h-full w-full', painting ? 'touch-none' : 'pointer-events-none')}
                 />
                 {/* THE CROP BOX. The img is w-auto against a max height, so its element
                     box already carries the picture's own aspect — which means the box can
@@ -880,7 +913,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                     onPointerMove={cropMove}
                     onPointerUp={cropUp}
                     onPointerCancel={cropUp}
-                    className="absolute inset-0 touch-none cursor-crosshair"
+                    className="absolute inset-0 z-30 touch-none cursor-crosshair"
                   >
                     {crop && crop.w > 0 && crop.h > 0 && (() => {
                       const l = (crop.x / natural.w) * 100;
@@ -1269,6 +1302,20 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                   </button>
                 ))}
               </div>
+              {cut && ghostOk && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className={cn('text-[11px]', colors.textMuted)}>
+                    Show what was cut away
+                  </span>
+                  <button
+                    onClick={() => setGhost((g) => !g)}
+                    className={cn('rounded-full border px-3 py-1 text-[11px]', colors.panelBorder, colors.textMain)}
+                    style={ghost ? { borderColor: colors.accent } : undefined}
+                  >
+                    {ghost ? <><Eye size={12} className="mr-1 inline" /> On</> : <><EyeOff size={12} className="mr-1 inline" /> Off</>}
+                  </button>
+                </div>
+              )}
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className={cn('w-16 text-[11px]', colors.textMuted)}>Brush</span>
                 <input

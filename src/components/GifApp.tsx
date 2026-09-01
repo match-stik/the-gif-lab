@@ -178,6 +178,28 @@ async function clearSessions(): Promise<void> {
   });
 }
 
+/**
+ * Which Discord lane an output size lands in.
+ *
+ * This decides three things that used to be decided separately and all asked the
+ * same wrong question — "is an output size set at all", never WHICH one. So
+ * picking Discord Emoji built a 128x128 file, squeezed it against the STICKER
+ * budget, called the button Create Discord Sticker GIF, and then put a green
+ * "under 512KB" badge on a file Discord refuses over 256KB. The label was being
+ * honest about what the code believed; the code believed one thing about every
+ * size.
+ *
+ * The numbers are Discord's own, not a line drawn here: custom emoji cap at
+ * 256KB and render at 128 square, stickers cap at 512KB at 320 square. A size
+ * that is neither keeps the old, larger budget rather than inheriting a guess.
+ */
+function discordLaneFor(width?: number, height?: number): { name: string | null; maxBytes: number } {
+  if (!width || !height) return { name: null, maxBytes: 512 * 1024 };
+  if (width === 320 && height === 320) return { name: 'Discord Sticker', maxBytes: 512 * 1024 };
+  if (width <= 128 && height <= 128) return { name: 'Discord Emoji', maxBytes: 256 * 1024 };
+  return { name: null, maxBytes: 512 * 1024 };
+}
+
 export function GifApp({ onClose, themeConfig, themeMode, embedded = false, active = true }: GifAppProps) {
   const colors = themeConfig[themeMode];
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1201,7 +1223,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
             dropDuplicates,
             removeFrames: removeFrames >= 2 ? removeFrames : undefined,
             stripMetadata,
-            maxBytes: 512 * 1024,
+            maxBytes: discordLaneFor(outputWidth, outputHeight).maxBytes,
           }),
         });
         if (!optimized.ok) {
@@ -1217,7 +1239,13 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
       }
 
       setOutputUrl(data.url);
-      setOutputSize({ kb: data.sizeKb, ok: data.discordOk, limitKb: data.maxKb ?? (preserveColorPreset ? 512 : 256) });
+      setOutputSize({
+        kb: data.sizeKb,
+        ok: data.discordOk,
+        limitKb: data.maxKb ?? (preserveColorPreset
+          ? Math.round(discordLaneFor(outputWidth, outputHeight).maxBytes / 1024)
+          : 256),
+      });
     } catch (err: any) {
       setError(err.message || 'GIF creation failed');
     } finally {
@@ -2441,7 +2469,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
             {preserveColorPreset && (
               <p className={cn("text-[11px]", colors.textMuted)}>
                 {outputWidth && outputHeight
-                  ? `Discord Sticker preset: transparent, letterboxed into ${outputWidth}×${outputHeight}, full color palette, timing-safe half-frame reduction, and light lossy compression against 512KB.`
+                  ? `${discordLaneFor(outputWidth, outputHeight).name ?? 'Resized'} preset: transparent, letterboxed into ${outputWidth}×${outputHeight}, full color palette, timing-safe half-frame reduction, and light lossy compression against ${Math.round(discordLaneFor(outputWidth, outputHeight).maxBytes / 1024)}KB.`
                   : 'Full color, transparent, half-frame reduction and light lossy compression against 512KB — at the frames\u2019 own size. Not a Discord sticker: set an Output Size above for that.'}
               </p>
             )}
@@ -2630,7 +2658,11 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
               {preserveColorPreset
-                ? (outputWidth && outputHeight ? 'Create Discord Sticker GIF' : 'Create Full-Color GIF')
+                ? (discordLaneFor(outputWidth, outputHeight).name
+                    ? `Create ${discordLaneFor(outputWidth, outputHeight).name} GIF`
+                    : (outputWidth && outputHeight
+                        ? `Create ${outputWidth}×${outputHeight} GIF`
+                        : 'Create Full-Color GIF'))
                 : 'Create GIF'}
             </button>
           </div>
