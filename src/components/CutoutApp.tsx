@@ -52,7 +52,7 @@ const CUTOUT_SESSION_KEY = 'gif-lab.cutout.session';
 /** How faint the cut-away picture sits behind the working one — the main view and
  *  the magnifier read this SAME number, because two copies of a value that must
  *  agree is the bug rather than the plan. */
-const GHOST_OPACITY = 0.42;
+const GHOST_OPACITY = 0.55;
 
 interface BatchItem {
   sessionId: string;
