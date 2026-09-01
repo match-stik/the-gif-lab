@@ -49,6 +49,11 @@ interface Stroke {
 // stay on the server; this is only the way back to them.
 const CUTOUT_SESSION_KEY = 'gif-lab.cutout.session';
 
+/** How faint the cut-away picture sits behind the working one — the main view and
+ *  the magnifier read this SAME number, because two copies of a value that must
+ *  agree is the bug rather than the plan. */
+const GHOST_OPACITY = 0.42;
+
 interface BatchItem {
   sessionId: string;
   filename: string;
@@ -877,7 +882,8 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                     alt=""
                     aria-hidden
                     onError={() => setGhostOk(false)}
-                    className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain opacity-30"
+                    style={{ opacity: GHOST_OPACITY }}
+                    className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain"
                   />
                 )}
                 <img
@@ -964,6 +970,24 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                     backgroundPosition: '0 0, 5px 5px',
                   }}
                 >
+                  {/* The ghost belongs in here MORE than it belongs in the main
+                      view. The loupe exists because a finger covers the exact
+                      spot it is painting — so this circle is the thing you are
+                      actually aiming with, and it was the one place showing
+                      nothing but a hole. */}
+                  {ghost && ghostOk && ghostUrl && cut && (
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        opacity: GHOST_OPACITY,
+                        backgroundImage: `url(${ghostUrl})`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundSize: `${natural.w * loupe.scale}px ${natural.h * loupe.scale}px`,
+                        backgroundPosition:
+                          `${LOUPE / 2 - loupe.x * loupe.scale}px ${LOUPE / 2 - loupe.y * loupe.scale}px`,
+                      }}
+                    />
+                  )}
                   <div
                     className="absolute inset-0"
                     style={{
