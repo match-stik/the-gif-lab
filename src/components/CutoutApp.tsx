@@ -157,8 +157,11 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   // never in screen pixels, so zoom and pan cannot drift it.
   const [cropping, setCropping] = useState(false);
   const [crop, setCrop] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const cropDrag = useRef<'new' | 'nw' | 'ne' | 'sw' | 'se' | null>(null);
+  const cropDrag = useRef<'new' | 'move' | 'nw' | 'ne' | 'sw' | 'se' | null>(null);
   const cropAnchor = useRef<{ x: number; y: number } | null>(null);
+  // Where inside the box the finger went down, so a moved box travels with the
+  // finger instead of jumping its corner to it.
+  const cropGrabOffset = useRef<{ x: number; y: number } | null>(null);
   const [restored, setRestored] = useState(false);
 
   // Ask once whether the local model is installed; the answer carries its own
@@ -622,6 +625,16 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
       if (near(crop.x + crop.w, crop.y)) { cropDrag.current = 'ne'; return; }
       if (near(crop.x, crop.y + crop.h)) { cropDrag.current = 'sw'; return; }
       if (near(crop.x + crop.w, crop.y + crop.h)) { cropDrag.current = 'se'; return; }
+      // Anywhere INSIDE the box moves it. Without this the only thing a drag
+      // could do was start a NEW box, so a box drawn slightly off could never be
+      // nudged — it had to be redrawn from scratch. The GIF tab's cropper has
+      // always had this; the two are the same interaction written twice and this
+      // one was the older copy.
+      if (p.x > crop.x && p.x < crop.x + crop.w && p.y > crop.y && p.y < crop.y + crop.h) {
+        cropDrag.current = 'move';
+        cropGrabOffset.current = { x: p.x - crop.x, y: p.y - crop.y };
+        return;
+      }
     }
     cropDrag.current = 'new';
     cropAnchor.current = { x: p.x, y: p.y };
@@ -636,6 +649,16 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
     const cx = Math.max(0, Math.min(p.x, natural.w));
     const cy = Math.max(0, Math.min(p.y, natural.h));
     setCrop((c) => {
+      if (mode === 'move') {
+        const off = cropGrabOffset.current;
+        if (!c || !off) return c;
+        // Clamped so the box cannot be dragged off the edge of the picture.
+        return {
+          ...c,
+          x: Math.max(0, Math.min(cx - off.x, natural.w - c.w)),
+          y: Math.max(0, Math.min(cy - off.y, natural.h - c.h)),
+        };
+      }
       if (mode === 'new') {
         const a = cropAnchor.current;
         if (!a) return c;
@@ -653,7 +676,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
     });
   }, [natural, toImagePoint]);
 
-  const cropUp = useCallback(() => { cropDrag.current = null; cropAnchor.current = null; }, []);
+  const cropUp = useCallback(() => { cropDrag.current = null; cropAnchor.current = null; cropGrabOffset.current = null; }, []);
 
   /** Tap a tile and it becomes the picture in the viewer. Everything up there already
    *  works on whichever {sessionId, filename} is loaded — color, subject, brush, revert
