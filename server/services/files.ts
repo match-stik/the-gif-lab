@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 // Copied out of the original app's file service. The route imports one function from it and
 // this is that function, unchanged — a filename sanitiser for the Content-
 // Disposition header.

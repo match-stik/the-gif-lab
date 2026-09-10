@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 import { cn } from '../lib/utils';
 import type { ThemeConfig } from '../lib/theme';
 

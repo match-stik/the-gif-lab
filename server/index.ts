@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 // GIF Lab — the standalone server.
 //
 // It serves the built page and mounts the routes at /api, which is exactly

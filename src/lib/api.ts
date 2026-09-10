@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 // Where the original app's authenticated client used to be.
 //
 // There it attaches a session cookie and a CSRF header, because that API

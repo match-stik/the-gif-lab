@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 """Export one still image to a size budget without wrecking it.
 
 Transparency-preserving, and deliberately pessimism-last: fit the pixel

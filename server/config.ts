@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 // Where the original app's config loader used to be.
 //
 // The route asks this for one thing: where the Python interpreter and the model

@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import {

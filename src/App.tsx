@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 // The whole shell. The original wraps these two in a phone app; here they get a
 // tab bar and nothing else, because there is nothing else.
 

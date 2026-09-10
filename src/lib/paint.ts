@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 // The paint surface, lifted out of Cutout so both tabs share one.
 //
 // It was only ever in Cutout because that is where it was first needed. GIF Lab
