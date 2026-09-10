@@ -231,6 +231,14 @@ curl -L -o u2net.onnx \
 
 The model file is about 176 MB, so that last line is the slow part.
 
+That model is not ours and is not part of this project. It is **U^2-Net**
+by Xuebin Qin and co-authors ([xuebinqin/U-2-Net][u2net], Apache-2.0),
+distributed as a release asset by [danielgatis/rembg][rembg] (MIT). GIF
+Lab only loads it — the weights, the research and the credit are theirs.
+
+[u2net]: https://github.com/xuebinqin/U-2-Net
+[rembg]: https://github.com/danielgatis/rembg
+
 **On Debian and Ubuntu the first line usually fails**, with a message about
 `ensurepip` not being available. Python is installed; the piece that builds
 virtual environments is packaged separately. Either install it —
