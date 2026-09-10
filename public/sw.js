@@ -1,3 +1,4 @@
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
 /* Just enough service worker to make this installable, and to let the page open
  * when the server is not running yet.
  *
