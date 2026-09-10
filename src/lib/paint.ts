@@ -138,6 +138,18 @@ export function usePaint({ imageRef, viewportRef, zoom = 1 }: Options) {
 
   const endStroke = useCallback(() => { strokeRef.current = null; setLoupe(null); }, []);
 
+  /** Throw away the stroke in progress instead of keeping it. What a SECOND
+   *  FINGER landing means: a pinch is starting, not painting. Without it the
+   *  first finger's touch-down is kept as a stray dab in the middle of a zoom,
+   *  which somebody then has to notice and undo. Lives here rather than in each host so
+   *  the next surface to grow a gesture does not have to work it out again. */
+  const cancelStroke = useCallback(() => {
+    if (!strokeRef.current) return;
+    strokeRef.current = null;
+    setLoupe(null);
+    setStrokes((prev) => prev.slice(0, -1));
+  }, []);
+
   // THE OVERLAY HAS TO REDRAW ITSELF, and it belongs here rather than in each
   // host. Without it the strokes are recorded and applied perfectly and NOTHING
   // APPEARS while you draw — you find out where the brush went only after you
@@ -182,7 +194,7 @@ export function usePaint({ imageRef, viewportRef, zoom = 1 }: Options) {
 
   return {
     canvasRef, painting, setPainting, tool, setTool, brush, setBrush,
-    strokes, loupe, drawStrokes, undo, clear, masks,
+    strokes, loupe, drawStrokes, undo, clear, masks, cancelStroke,
     /** Spread onto the overlay canvas. */
     canvasProps: {
       ref: canvasRef,

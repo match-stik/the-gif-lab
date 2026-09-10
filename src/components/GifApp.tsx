@@ -14,6 +14,10 @@ import { saveHref } from '../lib/download';
 
 type ThemeMode = 'light' | 'dark';
 
+/** How much of the un-cut frame shows through underneath while painting. Same
+ *  value Cutout uses, so the two tabs feel like one tool. */
+const GHOST_OPACITY = 0.55;
+
 interface Frame {
   filename: string;
   url: string;
@@ -244,7 +248,75 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
   const paintBoxRef = useRef<HTMLDivElement>(null);
   // The same surface Cutout uses. Two copies of the stroke maths would be the
   // bug, not the plan: the mask has to land on the pixels the overlay drew on.
-  const paint = usePaint({ imageRef: paintImageRef, viewportRef: paintBoxRef });
+  // ZOOM AND PAN. The screen is small and painting can feel like it does not
+  // track your finger. The mapping math was never wrong — the Cutout tab simply
+  // lets you get closer and this one did not, so you were painting a frame at
+  // arm's length with a fingertip that covers a dozen pixels.
+  // It is a pure view transform on the wrapper. Everything that maps between
+  // screen and image pixels reads the live bounding rect, which is already
+  // post-transform, so none of the stroke maths changes with zoom.
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ dist: number; zoom: number; cx: number; cy: number; pan: { x: number; y: number } } | null>(null);
+  const paint = usePaint({ imageRef: paintImageRef, viewportRef: paintBoxRef, zoom });
+  // THE GHOST. Painting a hole with nothing behind it means aiming a brush at
+  // transparency and finding out where it went only after apply. Cutout has had
+  // the un-cut frame underneath since July; this tab never got it.
+  // Both removal paths — cutout and chroma-key — write original-<filename> into
+  // the session dir before they touch a frame, so this resolves whenever there
+  // is something to paint back, and 404s harmlessly when there is not.
+  const [ghost, setGhost] = useState(true);
+  const [ghostOk, setGhostOk] = useState(true);
+  const ghostFrame = frames[previewFrame];
+  const ghostUrl = sessionId && ghostFrame
+    ? `/api/gif/frame/${sessionId}/original-${ghostFrame.filename}`
+    : '';
+  // Per FRAME, not per session. Cutout's flag is session-wide and its own note
+  // says one never-cut frame turns the ghost off for every frame after it.
+  useEffect(() => { setGhostOk(true); }, [previewFrame]);
+
+  // One finger paints. TWO fingers zoom and pan, so the two gestures can never
+  // be mistaken for one another — and the second finger landing cancels the dab
+  // the first one just started.
+  const gestureDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size !== 2) return;
+    paint.cancelStroke();
+    const [a, b] = [...pointers.current.values()];
+    gesture.current = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      zoom,
+      pan: { ...pan },
+      cx: (a.x + b.x) / 2,
+      cy: (a.y + b.y) / 2,
+    };
+  }, [paint, zoom, pan]);
+
+  const gestureMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = gesture.current;
+    if (!g || pointers.current.size < 2) return;
+    const [a, b] = [...pointers.current.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const next = Math.min(6, Math.max(1, g.zoom * (dist / g.dist)));
+    setZoom(next);
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    setPan(next <= 1.001 ? { x: 0, y: 0 } : { x: g.pan.x + (cx - g.cx), y: g.pan.y + (cy - g.cy) });
+  }, []);
+
+  const gestureUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) gesture.current = null;
+  }, []);
+
+  // The hook redraws on its own strokes; a host has to add its own view
+  // triggers or the overlay stays where the picture used to be.
+  useEffect(() => { paint.drawStrokes(paint.strokes); }, [zoom, pan, previewFrame]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A new frame starts at 1:1 rather than inheriting the last one's magnification.
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [previewFrame]);
   const [pickingColor, setPickingColor] = useState(false);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const textPadRef = useRef<HTMLDivElement | null>(null);
@@ -261,6 +333,23 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
   // and the largest height in the set — so the preview cannot be honest while it
   // only knows about one frame. This is what lets it draw the same canvas.
   const [frameSizes, setFrameSizes] = useState<Record<string, { w: number; h: number }>>({});
+  // AND THEY BELONG TO ONE SESSION. Every import names its frames frame-0001,
+  // frame-0002, and so on, so the keys collide TOTALLY across videos — while the
+  // measuring loop below skips any filename it already holds. Import a second
+  // video without clearing and its frames silently inherit the first one's
+  // dimensions, forever: the skip means they are never re-read, so the canvas is
+  // computed from a video that is no longer on screen and nothing self-corrects.
+  // The symptom is a new gif smashed into the previous one's square.
+  //
+  // THIS IS THE PREVIEW ONLY. Nothing here reaches the server — /api/gif/create
+  // sends the session id, the filenames and the target size, and the export pads
+  // onto a canvas it computes from the real files. So the export has always been
+  // right and the preview was the only thing lying — which is why the exported
+  // file is fine even when what you are watching is not.
+  useEffect(() => {
+    setFrameSizes({});
+    setFrameNatural(null);
+  }, [sessionId]);
 
   // Crop state
   const [showCrop, setShowCrop] = useState(false);
@@ -742,6 +831,17 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
     if (outputHeight) return { w: Math.max(1, Math.round(outputHeight * natural.w / natural.h)), h: outputHeight };
     return natural;
   }, [outputWidth, outputHeight, canvasSize, frameNatural]);
+
+  // 128x128 UP THERE IS A PLACEHOLDER, NOT A MEASUREMENT, AND IT WAS GETTING
+  // PAINTED. On a cold load nothing has decoded yet, so the pad laid itself out
+  // as a small SQUARE and the first frame or two played inside it before it
+  // jumped to the real shape. Going out and back in hid it completely, because
+  // the second visit has the frames cached and measures before the first paint —
+  // which is the control group: go out and back in and the fault disappears.
+  // A guessed aspect ratio is a claim rather than a placeholder. Hold the pad
+  // until there is a real one; one frame measuring is enough, and if not one
+  // frame can be read there is nothing to preview anyway.
+  const renderSizeKnown = !!(canvasSize || frameNatural || (outputWidth && outputHeight));
 
   // Preserve Color letterboxes the frame into the square; every other path
   // scales straight to the target, which stretches. The pad shows whichever one
@@ -2046,22 +2146,51 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                   what it cut; erase takes away what it kept. One frame at a time — the same
                   stroke on every frame would land on the wrong thing as soon as anything moves.
                 </p>
-                <div ref={paintBoxRef} className="relative flex items-center justify-center rounded-xl overflow-hidden">
+                {/* The layers are stated rather than left to DOM order: the ghost
+                    has to sit BELOW an image that is in normal flow, and a
+                    positioned element paints above in-flow content whatever order
+                    it is written in. Ghost 0, picture 10, strokes 20, loupe 30. */}
+                <div
+                  ref={paintBoxRef}
+                  onPointerDown={gestureDown}
+                  onPointerMove={gestureMove}
+                  onPointerUp={gestureUp}
+                  onPointerCancel={gestureUp}
+                  className={cn(
+                    'relative flex items-center justify-center rounded-xl overflow-hidden',
+                    (paint.painting || zoom > 1) && 'touch-none',
+                  )}
+                >
+                <div
+                  className="relative"
+                  style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center center' }}
+                >
+                  {ghost && ghostOk && ghostUrl && (
+                    <img
+                      src={ghostUrl}
+                      alt=""
+                      aria-hidden
+                      onError={() => setGhostOk(false)}
+                      style={{ opacity: GHOST_OPACITY }}
+                      className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain"
+                    />
+                  )}
                   <img
                     ref={paintImageRef}
                     src={frames[previewFrame].url}
                     alt=""
                     crossOrigin="anonymous"
                     onLoad={() => paint.drawStrokes(paint.strokes)}
-                    className="max-h-[46vh] w-auto object-contain"
+                    className="relative z-10 max-h-[46vh] w-auto object-contain"
                   />
                   <canvas
                     {...paint.canvasProps}
-                    className={cn('absolute inset-0 h-full w-full', paint.painting ? 'touch-none' : 'pointer-events-none')}
+                    className={cn('absolute inset-0 z-20 h-full w-full', paint.painting ? 'touch-none' : 'pointer-events-none')}
                   />
+                </div>
                   {paint.loupe && paintImageRef.current && (
                     <div
-                      className="pointer-events-none absolute top-1.5 z-20 overflow-hidden rounded-full border-2 shadow-lg"
+                      className="pointer-events-none absolute top-1.5 z-30 overflow-hidden rounded-full border-2 shadow-lg"
                       style={{
                         left: paint.loupe.side === 'left' ? 6 : undefined,
                         right: paint.loupe.side === 'right' ? 6 : undefined,
@@ -2102,6 +2231,23 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                     className={cn("px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40", colors.panelBorder, colors.textMuted)}
                   >
                     <Undo2 className="w-3.5 h-3.5" />
+                  </button>
+                  {zoom > 1.001 && (
+                    <button
+                      onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                      className={cn("px-3 py-1.5 rounded-lg text-xs border", colors.panelBorder, colors.textMuted)}
+                    >
+                      {zoom.toFixed(1)}×
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setGhost((on) => !on)}
+                    disabled={!ghostOk || !ghostUrl}
+                    title="Show the un-cut frame underneath"
+                    className={cn("px-3 py-1.5 rounded-lg text-xs border disabled:opacity-40", colors.panelBorder)}
+                    style={ghost && ghostOk ? { backgroundColor: colors.accent, color: 'var(--gl-on-accent)' } : { color: colors.textMuted }}
+                  >
+                    Ghost
                   </button>
                 </div>
 
@@ -2296,9 +2442,14 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                     // Capping the HEIGHT would leave the box wider than the frame
                     // it claims to be, which quietly breaks both the caption's
                     // scale and its position. Cap the width instead so the pad's
-                    // shape is always the output's shape.
-                    maxWidth: `calc(38vh * ${renderSize.w / renderSize.h})`,
-                    aspectRatio: `${renderSize.w} / ${renderSize.h}`,
+                    // shape is always the output's shape — and only once that
+                    // shape is a measurement rather than a guess.
+                    ...(renderSizeKnown
+                      ? {
+                        maxWidth: `calc(38vh * ${renderSize.w / renderSize.h})`,
+                        aspectRatio: `${renderSize.w} / ${renderSize.h}`,
+                      }
+                      : { height: 0 }),
                     containerType: 'inline-size',
                     backgroundImage:
                       'linear-gradient(45deg, rgba(128,128,128,.28) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.28) 75%),'
@@ -2307,7 +2458,7 @@ export function GifApp({ onClose, themeConfig, themeMode, embedded = false, acti
                     backgroundPosition: '0 0, 8px 8px',
                   }}
                 >
-                  {frames[padFrame]?.url && (
+                  {renderSizeKnown && frames[padFrame]?.url && (
                     <img
                       src={frames[padFrame].url}
                       alt=""

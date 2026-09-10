@@ -134,6 +134,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   // a loupe pinned to the opposite corner.
   const [loupe, setLoupe] = useState<{ x: number; y: number; scale: number; side: 'left' | 'right' } | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; cx: number; cy: number; pan: { x: number; y: number } } | null>(null);
 
@@ -441,6 +442,35 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   // Tap the picture to take the color from it. Typing hex codes to remove a
   // background you are looking at is the kind of small friction that stops a
   // tool getting used.
+  // ARMING THE EYEDROPPER USED TO MEAN GOING AND FINDING THE THING YOU WERE
+  // TOLD TO TAP. With a batch loaded you have to scroll up to pick the color you
+  // want removed: the button is most of the way down a long page and the picture
+  // is at the top of it.
+  //
+  // The GIF tab hit the same fault from the other side and its note is the right
+  // one: do not strand somebody at the end they did not start from. So the
+  // picture comes to you when the dropper is armed, and the swatch comes back
+  // the moment you have picked — you see what you got without a second trip.
+  // Both are block: 'nearest', so neither moves the page when it is already
+  // looking at the right thing.
+  useEffect(() => {
+    if (!picking) return;
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        viewportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [picking]);
+
+  const returnToPicker = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        pickerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    });
+  }, []);
+
   const pickFromImage = useCallback((event: MouseEvent<HTMLImageElement>) => {
     if (!picking) return;
     const img = event.currentTarget;
@@ -465,11 +495,13 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
       const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
       setKeyColour(`#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`);
       setPicking(false);
+      returnToPicker();
     } catch {
       setError("Couldn't read that pixel — use the color box instead.");
       setPicking(false);
+      returnToPicker();
     }
-  }, [picking]);
+  }, [picking, returnToPicker]);
 
   // Map a pointer event to the image's own pixel space, accounting for the
   // letterboxing object-contain introduces.
@@ -1224,7 +1256,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
 
           {mode === 'color' ? (
             <>
-              <div className="mt-3 flex items-center gap-2">
+              <div ref={pickerRef} className="mt-3 flex items-center gap-2">
                 <button
                   onClick={() => setPicking((p) => !p)}
                   className={cn('flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs', colors.panelBorder, colors.textMain)}
