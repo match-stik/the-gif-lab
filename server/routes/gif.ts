@@ -363,6 +363,55 @@ router.post('/gif/save-frame/:sessionId/:filename', (req, res) => {
  * one generator wants. Pass a filename to cut exactly one, which is what the Cutout
  * tab wants once you can tap a picture in the batch and work on it by itself.
  */
+/**
+ * THE PICTURE AS IT CAME IN, kept once, the first time anything changes a frame.
+ * Revert goes back to this. original-<frame> is a different object: it is the
+ * pre-cut picture IN THE CURRENT CROP, which the ghost and the restore brush
+ * need to match the frame's size, so a crop cuts it too — and that is why Revert
+ * used to stop at the last crop instead of going back to the start. A frame
+ * changed before this existed keeps what it has now.
+ */
+function keepAsItCameIn(sessionDir: string, filename: string): void {
+  const pristine = join(sessionDir, `pristine-${filename}`);
+  const framePath = join(sessionDir, filename);
+  if (!existsSync(pristine) && existsSync(framePath)) writeFileSync(pristine, readFileSync(framePath));
+}
+
+/**
+ * ONE STEP BACK AT A TIME. Before a Cutout step changes a
+ * frame, the frame and its kept original are copied aside as a numbered step,
+ * both together because a crop changes both. Flat files beside the frame, never
+ * a folder, because deleting a session unlinks every entry in its directory.
+ * The oldest go once a frame has more than MAX_STEPS.
+ */
+const MAX_STEPS = 30;
+const stepFile = (filename: string, n: number, part: 'frame' | 'original') =>
+  `step-${filename.replace(/\.png$/, '')}-${String(n).padStart(4, '0')}-${part}.png`;
+
+function listSteps(sessionDir: string, filename: string): number[] {
+  const prefix = `step-${filename.replace(/\.png$/, '')}-`;
+  return readdirSync(sessionDir)
+    .filter((f) => f.startsWith(prefix) && f.endsWith('-frame.png'))
+    .map((f) => Number(f.slice(prefix.length, prefix.length + 4)))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+}
+
+function saveStep(sessionDir: string, filename: string): void {
+  const framePath = join(sessionDir, filename);
+  if (!existsSync(framePath)) return;
+  const steps = listSteps(sessionDir, filename);
+  const next = (steps[steps.length - 1] ?? 0) + 1;
+  writeFileSync(join(sessionDir, stepFile(filename, next, 'frame')), readFileSync(framePath));
+  const originalPath = join(sessionDir, `original-${filename}`);
+  if (existsSync(originalPath)) writeFileSync(join(sessionDir, stepFile(filename, next, 'original')), readFileSync(originalPath));
+  for (const old of steps.slice(0, Math.max(0, steps.length + 1 - MAX_STEPS))) {
+    for (const part of ['frame', 'original'] as const) {
+      try { unlinkSync(join(sessionDir, stepFile(filename, old, part))); } catch { /* already gone */ }
+    }
+  }
+}
+
 router.post('/gif/crop/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
   const { x = 0, y = 0, width, height, filename } = req.body;
@@ -402,12 +451,34 @@ router.post('/gif/crop/:sessionId', async (req, res) => {
     }
 
     for (const frame of frames) {
+      keepAsItCameIn(sessionDir, frame);
+      if (filename) saveStep(sessionDir, frame);
       const framePath = join(sessionDir, frame);
-      const tempPath = join(sessionDir, `crop-temp-${frame}`);
+      // The kept original is what the ghost shows and what a restore brush paints
+      // back from. Cropping the frame without it left the whole uncropped picture
+      // behind the crop, and painting squashed all of it into the cropped shape.
+      // So it is cut by the same rectangle, but only while the two still agree on
+      // size: an original that already disagrees came from before this fix, and a
+      // rectangle measured on a different picture would only make it wrong twice.
+      const originalPath = join(sessionDir, `original-${frame}`);
+      let cropOriginal = false;
+      if (existsSync(originalPath)) {
+        try {
+          const [fm, om] = await Promise.all([sharp(framePath).metadata(), sharp(originalPath).metadata()]);
+          cropOriginal = fm.width === om.width && fm.height === om.height;
+        } catch {
+          cropOriginal = false;
+        }
+      }
+      const targets = cropOriginal
+        ? [{ path: framePath, name: frame }, { path: originalPath, name: `original-${frame}` }]
+        : [{ path: framePath, name: frame }];
+      for (const target of targets) {
+      const tempPath = join(sessionDir, `crop-temp-${target.name}`);
 
       await new Promise<void>((resolve, reject) => {
         const args = [
-          '-i', framePath,
+          '-i', target.path,
           '-vf', `crop=${width}:${height}:${x}:${y}`,
           '-c:v', 'png',
           '-y',
@@ -425,8 +496,9 @@ router.post('/gif/crop/:sessionId', async (req, res) => {
 
       // Replace original with cropped version
       const data = readFileSync(tempPath);
-      writeFileSync(framePath, data);
+      writeFileSync(target.path, data);
       try { unlinkSync(tempPath); } catch {}
+      }
     }
 
     res.json({ ok: true, croppedFrames: frames.length });
@@ -492,6 +564,8 @@ router.post('/gif/cutout/:sessionId/:filename', async (req, res) => {
     return;
   }
 
+  keepAsItCameIn(sessionDir, filename);
+  saveStep(sessionDir, filename);
   // Keep the untouched frame once, so re-running with different edges works
   // from the original rather than from an already-cut image.
   const originalPath = join(sessionDir, `original-${filename}`);
@@ -535,6 +609,36 @@ router.post('/gif/cutout/:sessionId/:filename', async (req, res) => {
  * Put a cut frame back the way it arrived.
  * POST /api/gif/cutout/:sessionId/:filename/revert
  */
+router.post('/gif/undo/:sessionId/:filename', (req, res) => {
+  const { sessionId, filename } = req.params;
+  if (sessionId.includes('..') || filename.includes('..') || !filename.startsWith('frame-')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const steps = existsSync(sessionDir) ? listSteps(sessionDir, filename) : [];
+  const last = steps[steps.length - 1];
+  if (last === undefined) {
+    res.status(409).json({ error: 'Nothing left to step back through' });
+    return;
+  }
+  const frameStep = join(sessionDir, stepFile(filename, last, 'frame'));
+  const originalStep = join(sessionDir, stepFile(filename, last, 'original'));
+  const framePath = join(sessionDir, filename);
+  const originalPath = join(sessionDir, `original-${filename}`);
+  writeFileSync(framePath, readFileSync(frameStep));
+  // A step saved before any original existed means there was none at that point,
+  // so one made later goes too: left behind it would be the wrong size.
+  if (existsSync(originalStep)) writeFileSync(originalPath, readFileSync(originalStep));
+  else if (existsSync(originalPath)) unlinkSync(originalPath);
+  try { unlinkSync(frameStep); } catch { /* best effort */ }
+  try { unlinkSync(originalStep); } catch { /* best effort */ }
+  // Cut means the picture differs from its kept original, which is the pre-cut
+  // picture in the current crop; no original means nothing has been cut yet.
+  const cut = existsSync(originalPath) && !readFileSync(framePath).equals(readFileSync(originalPath));
+  res.json({ filename, url: `/api/gif/frame/${sessionId}/${filename}?t=${Date.now()}`, cut, left: steps.length - 1 });
+});
+
 router.post('/gif/cutout/:sessionId/:filename/revert', (req, res) => {
   const { sessionId, filename } = req.params;
   if (sessionId.includes('..') || filename.includes('..')) {
@@ -544,12 +648,21 @@ router.post('/gif/cutout/:sessionId/:filename/revert', (req, res) => {
   const sessionDir = sessionDirOf(sessionId);
   if (!sessionDir) { res.status(400).json({ error: 'That is not a valid session.' }); return; }
   const originalPath = join(sessionDir, `original-${filename}`);
-  if (!existsSync(originalPath)) {
+  const pristinePath = join(sessionDir, `pristine-${filename}`);
+  // Back to the picture as it came in when the house has it; a frame changed
+  // before that copy existed falls back to the kept original, as it always did.
+  const source = existsSync(pristinePath) ? pristinePath : originalPath;
+  if (!existsSync(source)) {
     res.status(404).json({ error: 'No original kept for this frame' });
     return;
   }
-  writeFileSync(join(sessionDir, filename), readFileSync(originalPath));
-  res.json({ filename, url: `/api/gif/frame/${sessionId}/${filename}?t=${Date.now()}` });
+  const bytes = readFileSync(source);
+  saveStep(sessionDir, filename);
+  writeFileSync(join(sessionDir, filename), bytes);
+  // Back at the start, the kept original is the start again too, so the ghost and
+  // the restore brush match the picture's size rather than the last crop's.
+  if (source === pristinePath) writeFileSync(originalPath, bytes);
+  res.json({ filename, url: `/api/gif/frame/${sessionId}/${filename}?t=${Date.now()}`, fromStart: source === pristinePath });
 });
 
 /**
@@ -677,6 +790,8 @@ router.post(
       return;
     }
 
+    keepAsItCameIn(sessionDir, filename);
+    saveStep(sessionDir, filename);
     // Painting can happen before any cut, so the original may not exist yet.
     const originalPath = join(sessionDir, `original-${filename}`);
     if (!existsSync(originalPath)) writeFileSync(originalPath, readFileSync(framePath));
@@ -749,6 +864,8 @@ router.post('/gif/chroma-key/:sessionId/:filename', async (req, res) => {
 
     // Keep the untouched frame so a key can be retried, or undone, from the
     // real image rather than from an already-keyed one.
+    keepAsItCameIn(sessionDir, filename);
+    saveStep(sessionDir, filename);
     const keyOriginal = join(sessionDir, `original-${filename}`);
     if (!existsSync(keyOriginal)) writeFileSync(keyOriginal, readFileSync(framePath));
 

@@ -7,7 +7,7 @@
 // color, and only reduce colors if the file is genuinely over a cap.
 
 import { type MouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { Brush, Check, Crop, Download, Eraser, Eye, EyeOff, ImageUp, Loader2, Pipette, RotateCcw, TriangleAlert, Undo2, X } from 'lucide-react';
+import { Brush, Check, Crop, Download, Eraser, Eye, EyeOff, ImageUp, Loader2, Pipette, RotateCcw, TriangleAlert, Undo2, X, Wand2 } from 'lucide-react';
 import { ThemeConfig } from '../lib/theme';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
@@ -121,8 +121,15 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   // frame keyed by color, which keeps an original too and never returned one.
   const [ghost, setGhost] = useState(true);
   const [ghostOk, setGhostOk] = useState(true);
+  // THE GHOST'S ADDRESS NEVER CHANGED WHEN ITS PIXELS DID. A crop cuts the kept
+  // original on the server too, but the phone had already drawn the old one at
+  // this same URL and went on showing it — so after a second crop, painting put
+  // the previous crop's whole picture behind the new one, squashed to fit. Any
+  // step that can move the original bumps this, the same way the frame's own
+  // address is re-stamped after a crop.
+  const [ghostVersion, setGhostVersion] = useState(0);
   const ghostUrl = sessionId && filename
-    ? `/api/gif/frame/${sessionId}/original-${filename}`
+    ? `/api/gif/frame/${sessionId}/original-${filename}?v=${ghostVersion}`
     : '';
   // Zoom and pan are a pure view transform on the wrapper. Everything that maps
   // between screen and image pixels reads the live bounding rect, which is
@@ -224,6 +231,14 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
       if (!res.ok) throw new Error(data?.error || 'Background removal failed');
       setImageUrl(data.url);
       setCut(true);
+      // Same as the color key: the picture in the editor is also a tile in the grid.
+      // A subject cut only the editor knew about came back un-cut the moment you
+      // tapped the next picture, and never got its save button.
+      const doneUrl = `${data.url}${data.url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+      setBatch((current) => current.map((b) =>
+        b.sessionId === sessionId && b.filename === filename
+          ? { ...b, url: doneUrl, cut: true, error: undefined }
+          : b));
     } catch (err: any) {
       setError(err?.message || 'Background removal failed');
     } finally {
@@ -241,6 +256,15 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
         setImageUrl(data.url);
         setCut(false);
         setResult(null);
+        // Revert goes back to the picture as it came in, so the size can change and
+        // the kept original behind it is new: strokes and view belong to the old one.
+        setGhostVersion((v) => v + 1);
+        setGhostOk(true);
+        setStrokes([]);
+        // resetView is declared further down this component, so its two setters
+        // are called directly; naming it in the deps here would read it too early.
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
         // The editor's picture IS the first tile in the grid — same session, same
         // file. Reverting put the background back on disk, and the tile went on
         // showing the cutout, so tapping it downloaded a green image that nothing on
@@ -251,6 +275,37 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
             ? { ...b, url: `${data.url}${data.url.includes('?') ? '&' : '?'}t=${Date.now()}`, cut: false, error: undefined }
             : b));
       }
+    } finally {
+      setBusy('');
+    }
+  }, [sessionId, filename]);
+
+  /** Back one step: whatever the last crop, cut, key, paint or revert did to this
+   *  picture, undone, one at a time. The house keeps the steps; this only asks. */
+  const stepBack = useCallback(async () => {
+    if (!sessionId || !filename) return;
+    setError('');
+    setBusy('Stepping back…');
+    try {
+      const res = await apiFetch(`/api/gif/undo/${sessionId}/${filename}`, { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.url) {
+        setError(data?.error || 'Could not step back');
+        return;
+      }
+      setImageUrl(data.url);
+      setCut(!!data.cut);
+      setResult(null);
+      // A step back can change the size and the kept original, like a crop can.
+      setGhostVersion((v) => v + 1);
+      setGhostOk(true);
+      setStrokes([]);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setBatch((current) => current.map((b) =>
+        b.sessionId === sessionId && b.filename === filename
+          ? { ...b, url: `${data.url}${data.url.includes('?') ? '&' : '?'}t=${Date.now()}`, cut: !!data.cut, error: undefined }
+          : b));
     } finally {
       setBusy('');
     }
@@ -438,6 +493,64 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
     }
     setBatchBusy('');
   }, [batch, keyColour, tolerance, softness, greenScreen]);
+
+  /** Find the subject in every picture still waiting, with the same edge settings.
+   *  So nobody has to tap each one in turn. Sequential for the same reason keying
+   *  is, because every one is a model run on the box serving this. */
+  const subjectBatch = useCallback(async () => {
+    if (!batch.length) return;
+    setError('');
+    const todo = batch.map((b, i) => ({ b, i })).filter(({ b }) => !b.cut);
+    for (let n = 0; n < todo.length; n++) {
+      const { b: item, i } = todo[n];
+      setBatchBusy(`Finding the subject in ${n + 1} of ${todo.length}…`);
+      try {
+        const res = await apiFetch(`/api/gif/cutout/${item.sessionId}/${item.filename}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ feather, threshold: hardEdge ? 0.15 : undefined }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.error || 'Background removal failed');
+        const url = data?.url || `/api/gif/frame/${item.sessionId}/${item.filename}?t=${Date.now()}`;
+        const busted = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        setBatch((current) => current.map((b, idx) =>
+          idx === i ? { ...b, url: busted, cut: true, error: undefined } : b));
+        // Keep the editor in step if this is the picture it is holding.
+        if (item.sessionId === sessionId && item.filename === filename) {
+          setImageUrl(url);
+          setCut(true);
+          setResult(null);
+        }
+      } catch (err: any) {
+        setBatch((current) => current.map((b, idx) =>
+          idx === i ? { ...b, error: err?.message || 'Background removal failed' } : b));
+      }
+    }
+    setBatchBusy('');
+  }, [batch, feather, hardEdge, sessionId, filename]);
+
+  /** Undo one picture from the grid without touching any of the others. */
+  const revertItem = useCallback(async (item: BatchItem) => {
+    setError('');
+    try {
+      const res = await apiFetch(`/api/gif/cutout/${item.sessionId}/${item.filename}/revert`, { method: 'POST' });
+      const data = res.ok ? await res.json().catch(() => null) : null;
+      if (!data?.url) throw new Error('Could not put that one back');
+      const busted = `${data.url}${data.url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+      setBatch((current) => current.map((b) =>
+        b.sessionId === item.sessionId && b.filename === item.filename
+          ? { ...b, url: busted, cut: false, error: undefined }
+          : b));
+      if (item.sessionId === sessionId && item.filename === filename) {
+        setImageUrl(data.url);
+        setCut(false);
+        setResult(null);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Could not put that one back');
+    }
+  }, [sessionId, filename]);
 
   // Tap the picture to take the color from it. Typing hex codes to remove a
   // background you are looking at is the kind of small friction that stops a
@@ -762,6 +875,9 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
         all || (b.sessionId === sessionId && b.filename === filename)
           ? { ...b, url: bust(b.url) }
           : b));
+      // The kept original was cut by the same rectangle, so the ghost is new too.
+      setGhostVersion((v) => v + 1);
+      setGhostOk(true);
       // Strokes were painted against the old frame, so their coordinates are now lies.
       setStrokes([]);
       setCrop(null);
@@ -1164,19 +1280,23 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
           <div className={label}>Batch · {batch.length} image{batch.length === 1 ? '' : 's'}</div>
           <p className={cn('mt-1 text-[11px]', colors.textMuted)}>
             {batch.every((b) => b.cut)
-              ? 'Keyed. Tap any one to save it.'
-              : 'Set the color on the picture above, then key the rest with it.'}
+              ? 'Done. Tap the arrow on any one to save it, or the curl to put it back.'
+              : mode === 'subject'
+                ? 'Find the subject in all of them at once, or open one to work on it by itself.'
+                : 'Set the color on the picture above, then key the rest with it.'}
           </p>
           <button
-            onClick={() => void keyBatch()}
-            disabled={!!batchBusy || !cut || batch.every((b) => b.cut)}
+            onClick={() => void (mode === 'subject' ? subjectBatch() : keyBatch())}
+            disabled={!!batchBusy || (mode === 'color' && !cut) || batch.every((b) => b.cut)}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold disabled:opacity-50"
             style={{ backgroundColor: colors.accent, color: themeMode === 'dark' ? '#0b0b0d' : '#fff' }}
           >
-            {batchBusy ? <Loader2 size={15} className="animate-spin" /> : <Pipette size={15} />}
+            {batchBusy ? <Loader2 size={15} className="animate-spin" /> : mode === 'subject' ? <Wand2 size={15} /> : <Pipette size={15} />}
             {batchBusy || (batch.every((b) => b.cut)
-              ? 'All keyed'
-              : `Key the other ${batch.filter((b) => !b.cut).length} with this color`)}
+              ? (mode === 'subject' ? 'All cut' : 'All keyed')
+              : mode === 'subject'
+                ? `Find the subject in ${batch.every((b) => !b.cut) ? 'all' : 'the other'} ${batch.filter((b) => !b.cut).length}`
+                : `Key the other ${batch.filter((b) => !b.cut).length} with this color`)}
           </button>
           {/* A batch keyed with the wrong color was unrecoverable without picking all
               of them again — Original only ever put back the editor's own frame. */}
@@ -1224,6 +1344,20 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                     >
                       <Download size={11} />
                     </a>
+                  )}
+                  {/* Undo for this one picture alone, so one bad cut costs one picture. */}
+                  {item.cut && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Put this one back"
+                      title="Put this one back"
+                      onClick={(e) => { e.stopPropagation(); if (!batchBusy) void revertItem(item); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); void revertItem(item); } }}
+                      className="absolute bottom-1 left-1 rounded-full bg-black/55 p-1 text-white backdrop-blur"
+                    >
+                      <RotateCcw size={11} />
+                    </span>
                   )}
                   {item.error && (
                     <span className="absolute inset-x-1 bottom-1 rounded bg-red-950/85 px-1 py-0.5 text-[9px] text-red-100">{item.error}</span>
@@ -1326,6 +1460,14 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
             >
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Eraser size={15} />}
               {cut ? 'Try again' : mode === 'color' ? 'Key this color' : 'Find the subject'}
+            </button>
+            <button
+              onClick={() => void stepBack()}
+              disabled={!!busy}
+              title="Undo the last crop, cut, key, paint or revert"
+              className={cn('flex items-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs disabled:opacity-40', colors.panelBorder, colors.textMuted)}
+            >
+              <Undo2 size={14} /> Back a step
             </button>
             {cut && (
               <button
