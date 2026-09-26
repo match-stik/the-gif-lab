@@ -144,6 +144,19 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
   const pickerRef = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; cx: number; cy: number; pan: { x: number; y: number } } | null>(null);
+  // A MOUSE HAS ONE POINTER, so on a laptop the two-finger pan could never
+  // happen and a zoomed picture could not be moved at all. See panDown for what
+  // a mouse does instead.
+  const mouseDrag = useRef<{ id: number; x: number; y: number; pan: { x: number; y: number }; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  // The wheel listener is bound once per picture, so it reads the view through
+  // refs rather than through a closure that would freeze the first zoom.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef(pan);
+  panRef.current = pan;
 
   const [preset, setPreset] = useState('sticker');
   const [format, setFormat] = useState<'png' | 'webp'>('png');
@@ -757,6 +770,133 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
 
   const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
+  // What a mouse does instead of two fingers, once the picture is zoomed in.
+  // Holding the left button down drags the picture whenever it is not painting
+  // or cropping, which is what people reach for first. While it IS painting or
+  // cropping that button belongs to the brush and the box, so holding Space
+  // (how Aseprite does it) or pressing the middle button drags the picture
+  // instead. Touch is left exactly as it was: one finger paints, two move.
+  //
+  // These run in the capture phase, so a Space-drag gets here before the paint
+  // canvas or the crop box can start something with it. The pointer is only
+  // captured once the press has actually moved, because capturing it on the way
+  // down would retarget the click, and a plain click on the picture has to stay
+  // a color pick.
+  const panDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    suppressClick.current = false;
+    if (e.pointerType === 'touch' || zoom <= 1) return;
+    const claimed = e.button === 1 || (e.button === 0 && spaceHeld);
+    if (!claimed && !(e.button === 0 && !painting && !cropping)) return;
+    if (claimed) e.stopPropagation();
+    // Stops the browser dragging the image file itself. It does not cancel the
+    // click, so a press that never moves still picks.
+    e.preventDefault();
+    mouseDrag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, pan: { ...pan }, moved: false };
+  }, [zoom, pan, spaceHeld, painting, cropping]);
+
+  const panMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = mouseDrag.current;
+    if (!d || d.id !== e.pointerId) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < 4) return;
+      d.moved = true;
+      setDragging(true);
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    }
+    setPan({ x: d.pan.x + dx, y: d.pan.y + dy });
+  }, []);
+
+  const panUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = mouseDrag.current;
+    if (!d || d.id !== e.pointerId) return;
+    mouseDrag.current = null;
+    setDragging(false);
+    // A drag that ends over the picture can still fire a click on it, and that
+    // click is the end of a move rather than a color pick.
+    if (d.moved) suppressClick.current = true;
+  }, []);
+
+  const swallowDragClick = useCallback((e: MouseEvent<HTMLDivElement>) => {
+    if (!suppressClick.current) return;
+    suppressClick.current = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, []);
+
+  // Space is only claimed while there is something to move: this app showing, a
+  // picture zoomed in, and the key not headed for a text box. The zoom slider is
+  // the one input it may come from, because that is where focus sits right
+  // after zooming.
+  useEffect(() => {
+    if (!active || !imageUrl || zoom <= 1) {
+      setSpaceHeld(false);
+      return;
+    }
+    const typing = (t: EventTarget | null) =>
+      t instanceof HTMLElement
+      && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
+        || (t instanceof HTMLInputElement && t.type !== 'range'));
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || typing(e.target)) return;
+      e.preventDefault();
+      setSpaceHeld(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || typing(e.target)) return;
+      e.preventDefault();
+      setSpaceHeld(false);
+    };
+    const release = () => setSpaceHeld(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', release);
+    };
+  }, [active, imageUrl, zoom]);
+
+  // A laptop trackpad. Two fingers scroll a zoomed picture around, and a pinch,
+  // which the browser delivers as a ctrl-wheel exactly like Ctrl and a mouse
+  // wheel, zooms the picture about the pointer instead of zooming the whole
+  // page. Unzoomed, a plain scroll is left alone to scroll the page.
+  // Bound by hand because React's own wheel listener is passive and cannot
+  // stop the page moving underneath.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || !imageUrl) return;
+    const onWheel = (e: WheelEvent) => {
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+      const z = zoomRef.current;
+      const p = panRef.current;
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const next = Math.min(6, Math.max(1, z * Math.exp(-e.deltaY * unit * 0.01)));
+        const rect = el.getBoundingClientRect();
+        const dx = e.clientX - (rect.left + rect.width / 2);
+        const dy = e.clientY - (rect.top + rect.height / 2);
+        const nextPan = next <= 1.001
+          ? { x: 0, y: 0 }
+          : { x: dx - (next * (dx - p.x)) / z, y: dy - (next * (dy - p.y)) / z };
+        zoomRef.current = next;
+        panRef.current = nextPan;
+        setZoom(next);
+        setPan(nextPan);
+        return;
+      }
+      if (z <= 1) return;
+      e.preventDefault();
+      const nextPan = { x: p.x - e.deltaX * unit, y: p.y - e.deltaY * unit };
+      panRef.current = nextPan;
+      setPan(nextPan);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [imageUrl]);
+
   const cropDown = useCallback((e: React.PointerEvent) => {
     const p = toImagePoint(e.clientX, e.clientY);
     if (!p || !natural.w) return;
@@ -1036,7 +1176,18 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
               onPointerMove={gestureMove}
               onPointerUp={gestureUp}
               onPointerCancel={gestureUp}
-              className={cn('relative overflow-hidden', (painting || zoom > 1) && 'touch-none')}
+              onPointerDownCapture={panDown}
+              onPointerMoveCapture={panMove}
+              onPointerUpCapture={panUp}
+              onPointerCancelCapture={panUp}
+              onClickCapture={swallowDragClick}
+              className={cn(
+                'relative overflow-hidden',
+                (painting || zoom > 1) && 'touch-none',
+                zoom > 1 && 'select-none',
+                zoom > 1 && (spaceHeld || (!painting && !cropping && !picking)) && 'cursor-grab',
+                dragging && 'cursor-grabbing',
+              )}
             >
               <div
                 className="relative"
@@ -1052,6 +1203,7 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                     src={ghostUrl}
                     alt=""
                     aria-hidden
+                    draggable={false}
                     onError={() => setGhostOk(false)}
                     style={{ opacity: GHOST_OPACITY }}
                     className="pointer-events-none absolute inset-0 z-0 h-full w-full object-contain"
@@ -1062,12 +1214,15 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                   src={imageUrl}
                   alt=""
                   crossOrigin="anonymous"
+                  draggable={false}
                   onClick={pickFromImage}
                   onLoad={(e) => {
                     setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
                     drawStrokes(strokes);
                   }}
-                  className={cn('relative z-10 max-h-[46vh] w-auto object-contain', picking && 'cursor-crosshair')}
+                  // Taller on a wide screen: 46vh suits a phone, and on a laptop
+                  // it left the picture small in a lot of empty room.
+                  className={cn('relative z-10 max-h-[46vh] md:max-h-[64vh] w-auto object-contain', picking && 'cursor-crosshair')}
                 />
                 {/* The paint surface sits exactly over the image and only takes
                     pointer events while painting, so tapping to pick a color and
@@ -1510,6 +1665,9 @@ export function CutoutApp({ themeConfig, themeMode, active = true }: CutoutAppPr
                 Pinch with two fingers to zoom in, drag with two to move around — one finger always
                 paints, so the gestures never collide. While you paint, a magnifier shows the spot
                 under your hand in the opposite corner.
+                <br />
+                On a laptop, hold Space (or the middle button) and drag to move around while you
+                paint. Two fingers on the trackpad scroll the picture, and a pinch zooms it.
               </div>
               <div className="mt-2 flex gap-1.5">
                 {([['restore', 'Bring back'], ['erase', 'Take away']] as const).map(([id, text]) => (
