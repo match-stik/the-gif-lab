@@ -1301,7 +1301,14 @@ async function dropDuplicateFrames(inputPath: string, outputPath: string, workDi
       proc.on('error', reject);
     });
 
-    await runGifsicle(['--unoptimize', '--explode', '-o', join(scratch, 'g'), inputPath]);
+    // --unoptimize is what makes each exploded frame whole, and gifsicle can
+    // refuse it ("GIF too complex to unoptimize", e.g. a local colour table, which
+    // the text overlay leaves behind) with only a WARNING and a clean exit. The
+    // frames it writes are then still deltas, and reassembling deltas with
+    // --disposal=background wipes everything that did not move: text fine on the
+    // first frame and snow after it. Leave the animation alone rather than break it.
+    const exploded = await runGifsicle(['--unoptimize', '--explode', '-o', join(scratch, 'g'), inputPath]);
+    if (/too complex to unoptimize/i.test(exploded)) return 0;
 
     const entries = readdirSync(scratch);
     const pngs = entries.filter(f => f.startsWith('p-')).sort();
@@ -1355,7 +1362,10 @@ async function dropEveryNthFrame(
     const info = await runGifsicle(['--info', inputPath]);
     const delays = parseDelays(info);
     const loopsForever = /loop forever/.test(info);
-    await runGifsicle(['--unoptimize', '--explode', '-o', join(scratch, 'f'), inputPath]);
+    // Same refusal as in dropDuplicateFrames: deltas reassembled with
+    // --disposal=background lose everything that did not move.
+    const exploded = await runGifsicle(['--unoptimize', '--explode', '-o', join(scratch, 'f'), inputPath]);
+    if (/too complex to unoptimize/i.test(exploded)) return 0;
     const gifFrames = readdirSync(scratch).filter(f => f.startsWith('f.')).sort();
     if (gifFrames.length < 2) return 0;
 
