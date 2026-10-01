@@ -15,10 +15,10 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
-    "express": "^4.21.0",
+    "express": "^4.22.3",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
-    "multer": "^2.0.2",
+    "multer": "^2.4.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "sharp": "^0.35.3",
