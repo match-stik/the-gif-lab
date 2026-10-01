@@ -35,6 +35,22 @@ const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
 const unsafeName = (v: unknown): boolean =>
   typeof v !== 'string' || v === '.' || v === '..' || !SAFE_NAME.test(v);
 
+/**
+ * Values that go into an ffmpeg drawtext filter. The text and the font name sit
+ * inside quotes and are escaped; a colour or a size sits outside any quotes, so
+ * it may only be a colour (a name, #rrggbb or 0xrrggbb, with an optional
+ * @alpha) or a number, which keeps a ':' or a quote from starting a filter
+ * option of its own (textfile= would read any file the server can).
+ */
+const escapeDrawtextValue = (value: string): string =>
+  value.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+const isDrawtextColor = (value: unknown): boolean =>
+  typeof value === 'string' && /^(#|0x)?[A-Za-z0-9]{1,32}(@[0-9.]{1,5})?$/.test(value);
+const isDrawtextSize = (value: unknown): boolean => {
+  const n = Number(value);
+  return typeof value !== 'boolean' && Number.isFinite(n) && n > 0 && n <= 1000;
+};
+
 router.use((req, res, next) => {
   const named: unknown[] = [
     req.params?.sessionId, req.params?.filename,
@@ -971,6 +987,10 @@ router.post('/gif/create', async (req, res) => {
 
   const sessionDir = sessionDirOf(sessionId);
   if (!sessionDir) { res.status(400).json({ error: 'That is not a valid session.' }); return; }
+  if (text?.content && (!isDrawtextColor(text.fontColor ?? 'white') || !isDrawtextColor(text.borderColor ?? 'black') || !isDrawtextSize(text.fontSize ?? 24))) {
+    res.status(400).json({ error: 'That text colour or size is not one the overlay can use.' });
+    return;
+  }
   if (!existsSync(sessionDir)) {
     res.status(404).json({ error: 'Session not found' });
     return;
@@ -1184,7 +1204,7 @@ router.post('/gif/create', async (req, res) => {
       const { posX, posY } = textPositionExprs({ position, anchor });
 
       const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
-      const escapedFont = fontFamily.replace(/:/g, '\\:');
+      const escapedFont = escapeDrawtextValue(String(fontFamily));
       const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
 
       await new Promise<void>((resolve, reject) => {
@@ -1681,8 +1701,12 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
     anchor // { x, y } as fractions of the frame — a hand-placed position
   } = req.body;
 
-  if (!text) {
+  if (!text || typeof text !== 'string') {
     res.status(400).json({ error: 'text required' });
+    return;
+  }
+  if (!isDrawtextColor(fontColor) || !isDrawtextColor(borderColor) || !isDrawtextSize(fontSize)) {
+    res.status(400).json({ error: 'That text colour or size is not one the overlay can use.' });
     return;
   }
 
@@ -1707,7 +1731,7 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
 
     // Escape text for ffmpeg (single quotes and backslashes)
     const escapedText = text.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
-    const escapedFont = fontFamily.replace(/:/g, '\\:');
+    const escapedFont = escapeDrawtextValue(String(fontFamily));
 
     const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
 
