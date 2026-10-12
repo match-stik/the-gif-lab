@@ -1122,10 +1122,10 @@ router.post('/gif/create', async (req, res) => {
 
     // Cleanup temp files
     try { unlinkSync(paletteFile); } catch {}
-    try {
-      for (const f of readdirSync(seqDir)) unlinkSync(join(seqDir, f));
-      require('fs').rmdirSync(seqDir);
-    } catch {}
+    // One call takes the frame folder and everything in it. The cleanup used to
+    // end on require('fs'), which doesn't exist in an ES module, so it threw
+    // inside the catch every time and the folder was left behind.
+    try { rmSync(seqDir, { recursive: true, force: true }); } catch {}
 
     // GIF transparency means "keep whatever pixel was already there", so every frame of a
     // transparent animation needs disposal method 2 (restore to background) or the previous
@@ -1816,12 +1816,9 @@ router.delete('/gif/session/:sessionId', (req, res) => {
   const sessionDir = sessionDirOf(sessionId);
   if (!sessionDir) { res.status(400).json({ error: 'That is not a valid session.' }); return; }
   if (existsSync(sessionDir)) {
-    try {
-      for (const f of readdirSync(sessionDir)) {
-        unlinkSync(join(sessionDir, f));
-      }
-      require('fs').rmdirSync(sessionDir);
-    } catch {}
+    // Same fault as the frame folder: require() is undefined in an ES module,
+    // so the old cleanup emptied the folder and then never removed it.
+    try { rmSync(sessionDir, { recursive: true, force: true }); } catch {}
   }
   res.json({ ok: true });
 });
