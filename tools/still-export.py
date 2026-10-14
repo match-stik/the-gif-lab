@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 match-stik. Licensed under the Apache License 2.0.
+# Copyright 2026 match-stik. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit GIF Lab in your NOTICE file for this and anything ported before.
 """Export one still image to a size budget without wrecking it.
 
 Transparency-preserving, and deliberately pessimism-last: fit the pixel

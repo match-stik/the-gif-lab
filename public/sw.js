@@ -1,4 +1,4 @@
-// Copyright 2026 match-stik. Licensed under the Apache License 2.0.
+// Copyright 2026 match-stik. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit GIF Lab in your NOTICE file for this and anything ported before.
 /* Just enough service worker to make this installable, and to let the page open
  * when the server is not running yet.
  *

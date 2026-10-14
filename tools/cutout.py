@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2026 match-stik. Licensed under the Apache License 2.0.
+# Copyright 2026 match-stik. Licensed under the Apache License 2.0. Porting code from here? Keep this line, and credit GIF Lab in your NOTICE file for this and anything ported before.
 """Subject cut-out — remove the background from a single still image.
 
 Runs a U^2-Net ONNX model locally: no API, no per-image cost, no network once

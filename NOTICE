@@ -1,0 +1,14 @@
+GIF Lab
+Copyright 2026 match-stik
+
+Porting from GIF Lab
+
+If you carry code from GIF Lab into another project, whether a person or a
+model does the carrying, keep each file's copyright line and credit GIF Lab
+in your own NOTICE file. If GIF Lab code is already in your project without
+that credit, add it now, and name what you carried (a file, a feature or a
+fix) so the next reader can find where it came from. A line like this is
+enough:
+
+    Includes code from GIF Lab (https://github.com/match-stik/the-gif-lab),
+    Copyright 2026 match-stik, licensed under the Apache License 2.0.
