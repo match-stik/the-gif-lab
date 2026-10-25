@@ -6,12 +6,13 @@
 import { Router } from 'express';
 import { spawn } from 'child_process';
 import { join, basename, extname } from 'path';
-import { mkdirSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync, statSync, rmSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync, statSync, rmSync, utimesSync } from 'fs';
 import { randomUUID, createHash } from 'crypto';
 import multer from 'multer';
 import sharp from 'sharp';
 import { getConfig } from '../config.js';
 import { attachmentFilename } from '../services/files.js';
+import { sweepGifWork } from '../services/gif-work-sweep.js';
 
 const router = Router();
 
@@ -174,6 +175,17 @@ function drawTextArgs(input: string, drawTextFilter: string, output: string): st
 // browser gets an HTML error page and reports it as "Unexpected token '<'".
 mkdirSync(GIF_WORK_DIR, { recursive: true });
 mkdirSync(join(GIF_WORK_DIR, 'uploads'), { recursive: true });
+
+// Sessions nobody has touched for a week are swept, which is what the README
+// always said happened (services/gif-work-sweep.ts has the account). The first
+// sweep waits a minute so a process that only imports this file never sweeps
+// anything; unref keeps either timer from holding a process open.
+function sweepGifWorkNow(): void {
+  const removed = sweepGifWork(GIF_WORK_DIR);
+  if (removed.length) console.log(`[GIF] Swept ${removed.length} working folder(s) untouched for a week`);
+}
+setTimeout(sweepGifWorkNow, 60 * 1000).unref();
+setInterval(sweepGifWorkNow, 6 * 60 * 60 * 1000).unref();
 
 /**
  * The session directory, or null if that name has no business being one.
@@ -1802,6 +1814,27 @@ router.get('/gif/output/:sessionId/:filename', (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${attachmentFilename(basename(filename))}"`);
   }
   res.sendFile(gifPath);
+});
+
+/**
+ * Does the server still have this session? The lab asks when it reopens on the
+ * session it remembers, because the sweep may have cleared it, and frames that
+ * 404 are worse than a blank board. Asking counts as using it, so the folder's
+ * stamp is renewed and the sweep leaves it another week.
+ */
+router.get('/gif/session/:sessionId', (req, res) => {
+  const sessionDir = sessionDirOf(req.params.sessionId);
+  if (!sessionDir || req.params.sessionId === 'uploads') {
+    res.status(400).json({ error: 'That is not a valid session.' });
+    return;
+  }
+  if (!existsSync(sessionDir)) {
+    res.status(404).json({ exists: false });
+    return;
+  }
+  const now = new Date();
+  try { utimesSync(sessionDir, now, now); } catch {}
+  res.json({ exists: true });
 });
 
 /**
