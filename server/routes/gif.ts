@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { spawn } from 'child_process';
-import { join, basename, extname } from 'path';
+import { join, basename, extname, resolve, sep } from 'path';
 import { mkdirSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync, statSync, rmSync, utimesSync } from 'fs';
 import { randomUUID, createHash } from 'crypto';
 import multer from 'multer';
@@ -202,7 +202,12 @@ setInterval(sweepGifWorkNow, 6 * 60 * 60 * 1000).unref();
  */
 function sessionDirOf(sessionId: unknown): string | null {
   if (unsafeName(sessionId)) return null;
-  return join(GIF_WORK_DIR, sessionId as string);
+  // Resolved and checked to stay inside the working folder as well, the form
+  // of the check a code scanner can follow.
+  const root = resolve(GIF_WORK_DIR);
+  const dir = resolve(root, sessionId as string);
+  if (!dir.startsWith(root + sep)) return null;
+  return dir;
 }
 
 
@@ -643,7 +648,8 @@ router.post('/gif/undo/:sessionId/:filename', (req, res) => {
     res.status(400).json({ error: 'Invalid path' });
     return;
   }
-  const sessionDir = join(GIF_WORK_DIR, sessionId);
+  const sessionDir = sessionDirOf(sessionId);
+  if (!sessionDir) { res.status(400).json({ error: 'Invalid path' }); return; }
   const steps = existsSync(sessionDir) ? listSteps(sessionDir, filename) : [];
   const last = steps[steps.length - 1];
   if (last === undefined) {
