@@ -45,6 +45,17 @@ const unsafeName = (v: unknown): boolean =>
  */
 const escapeDrawtextValue = (value: string): string =>
   value.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+/**
+ * The drawtext option that carries a caption, read from a file rather than
+ * written into the filter. Escaping the words inline never held: a caption
+ * with an apostrophe (It's been 84 years ...) closed the quoted value early,
+ * and drawtext then printed the rest of its own instruction, font and size
+ * included, as tiny text in the corner. A file needs no escaping at all, and
+ * expansion=none keeps a % in the words from being read as a code. The path
+ * is ours (a session folder and a uuid), so it never holds a quote either.
+ */
+const drawtextTextFileOption = (textFilePath: string): string =>
+  `textfile='${escapeDrawtextValue(textFilePath)}':expansion=none`;
 const isDrawtextColor = (value: unknown): boolean =>
   typeof value === 'string' && /^(#|0x)?[A-Za-z0-9]{1,32}(@[0-9.]{1,5})?$/.test(value);
 const isDrawtextSize = (value: unknown): boolean => {
@@ -162,7 +173,12 @@ function drawTextArgs(input: string, drawTextFilter: string, output: string): st
     `[0:v]format=rgba,${drawTextFilter},split[a][b];`
       + '[b]palettegen=reserve_transparent=1:stats_mode=diff[p];'
       + '[a][p]paletteuse=alpha_threshold=128',
-    '-gifflags', '-offsetting',
+    // -transdiff as well as -offsetting: every frame is written whole. With
+    // transdiff on, ffmpeg makes the pixels a frame shares with the last one
+    // see-through and leans on the frame underneath, but the frames it reads
+    // here carry disposal=background, so the frame underneath is cleared and
+    // the shared pixels show as holes: black specks across a captioned GIF.
+    '-gifflags', '-offsetting-transdiff',
     '-y', output,
   ];
 }
@@ -1221,9 +1237,10 @@ router.post('/gif/create', async (req, res) => {
 
       const { posX, posY } = textPositionExprs({ position, anchor });
 
-      const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+      const textFile = join(sessionDir, `${outputId}-text.txt`);
+      writeFileSync(textFile, String(content));
       const escapedFont = escapeDrawtextValue(String(fontFamily));
-      const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
+      const drawTextFilter = `drawtext=${drawtextTextFileOption(textFile)}:font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
 
       await new Promise<void>((resolve, reject) => {
         const args = drawTextArgs(finalGif, drawTextFilter, textTempGif);
@@ -1757,11 +1774,13 @@ router.post('/gif/add-text/:sessionId/:filename', async (req, res) => {
 
     const { posX, posY } = textPositionExprs({ position, anchor, x, y });
 
-    // Escape text for ffmpeg (single quotes and backslashes)
-    const escapedText = text.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+    // The words go to drawtext in a file, never escaped into the filter
+    // (drawtextTextFileOption has why).
+    const textFile = join(dir, `${outputId}-text.txt`);
+    writeFileSync(textFile, text);
     const escapedFont = escapeDrawtextValue(String(fontFamily));
 
-    const drawTextFilter = `drawtext=text='${escapedText}':font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
+    const drawTextFilter = `drawtext=${drawtextTextFileOption(textFile)}:font='${escapedFont}':fontsize=${fontSize}:fontcolor=${fontColor}:${posX}:${posY}:borderw=2:bordercolor=${borderColor}`;
 
     await new Promise<void>((resolve, reject) => {
       const args = drawTextArgs(gifPath, drawTextFilter, outputPath);
